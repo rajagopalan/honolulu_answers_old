@@ -1,0 +1,130 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Launch an AWS development environment for Honolulu Answers",
+
+    "Parameters" : {
+        "KeyName" : {
+            "Description" : "Name of an existing EC2 KeyPair to enable SSH access to the instance",
+            "Type" : "String"
+        }
+    },
+    "Mappings": {
+        "RegionMap": {
+            "us-east-1": {
+                "AMI": "ami-7c807d14"
+            },
+            "us-west-1": {
+                "AMI": "ami-a8d3d4ed"
+            },
+            "us-west-2": {
+                "AMI": "ami-1b3b462b"
+            },
+            "eu-west-1": {
+                "AMI": "ami-672ce210"
+            },
+            "sa-east-1": {
+                "AMI": "ami-c7e649da"
+            },
+            "ap-southeast-1": {
+                "AMI": "ami-56b7eb04"
+            },
+            "ap-southeast-2": {
+                "AMI": "ami-6bf99c51"
+            },
+            "ap-northeast-1": {
+                "AMI": "ami-25dd9324"
+            }
+        }
+    },
+
+    "Resources": {
+        "SecGroup" : {
+            "Type" : "AWS::EC2::SecurityGroup",
+            "Properties" : {
+                "GroupDescription" : "Enable SSH and HTTP",
+                "SecurityGroupIngress" : [ { "IpProtocol" : "tcp", "FromPort" : "22", "ToPort" : "22", "CidrIp" : "0.0.0.0/0" },
+                                           { "IpProtocol" : "tcp", "FromPort" : "80", "ToPort" : "80", "CidrIp" : "0.0.0.0/0" } ]
+            }
+        },
+
+        "Instance": {
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+                "ImageId": {
+                    "Fn::FindInMap": [
+                        "RegionMap",
+                        {
+                            "Ref": "AWS::Region"
+                        },
+                        "AMI"
+                    ]
+},
+                "InstanceType": "t1.micro",
+                "KeyName": {"Ref" : "KeyName"},
+                "SecurityGroups" : [ {"Ref" : "SecGroup"} ],
+                "UserData": {
+                    "Fn::Base64": { "Fn::Join": ["",
+                        [
+                            "#!/bin/bash","\n",
+                            "yum update -y","\n",
+                            "curl -sSL https://get.rvm.io | /bin/bash","\n",
+                            "source /home/ec2-user/.rvm/scripts/rvm","\n",
+                            "rvm install ruby-1.9.3-p484","\n",
+                            "cd /home/ec2-user","\n",
+                            "/usr/bin/git clone https://github.com/rajagopalan/honolulu_answers.git","\n",
+                            "/usr/bin/git clone https://github.com/rajagopalan/honolulu_jenkins_cookbooks.git","\n",
+                            "cd /home/ec2-user/honolulu_answers","\n",
+                            "bundle install","\n",
+                "/opt/aws/bin/cfn-init -s ", { "Ref": "AWS::StackId" }, " --region us-east-1 -r Instance","\n"
+                    ]]}
+                }
+            },
+
+            "Metadata": {
+                "AWS::CloudFormation::Init": {
+                    "config": {
+                        "packages" : {
+                            "rpm" : {
+                                "rbel" : "http://rbel.frameos.org/rbel6"
+                            },
+                            "yum" : {
+                                "ruby-devel" : [],
+                                "ruby-ri" : [],
+                                "ruby-rdoc" : [],
+                                "gcc" : [],
+                                "gcc-c++" : [],
+                                "automake" : [],
+                                "autoconf" : [],
+                                "make" : [],
+                                "curl" : [],
+                                "dmidecode" : [],
+                                "rubygems" : [],
+                                "postgresql-devel": [],
+                                "postgresql": [],
+                                "git": [],
+                                "memcached": [],
+                                "libxslt-devel": [],
+                                "libxml2-devel": [],
+                                "libxml2": [],
+                                "cyrus-sasl-devel": [],
+                                "cyrus-sasl-lib": [],
+                                "sqlite-devel": []
+                            },
+                            "rubygems" : {
+                                "chef" : []
+                            }
+                        },
+                        "files" : {
+                            "/home/ec2-user/placeholder" : {
+                                "content" : "I am a placeholder.",
+                                "mode" : "000644",
+                                "owner" : "ec2-user",
+                                "group" : "ec2-user"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

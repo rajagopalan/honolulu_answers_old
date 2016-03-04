@@ -1,0 +1,382 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Launches OpsWorks stack, layer, instances and associated resources to run a Honolulu Answers application.",
+  "Parameters": {
+    "DBPassword": {
+      "Default": "password",
+      "NoEcho": "true",
+      "Description": "The database admin account password",
+      "Type": "String",
+      "MinLength": "8",
+      "MaxLength": "41",
+      "AllowedPattern": "[a-zA-Z0-9]*",
+      "ConstraintDescription": "must contain only alphanumeric characters."
+    },
+     "DBUser": {
+      "Default": "honolulu",
+      "Description": "The database user",
+      "Type": "String",
+      "MinLength": "8",
+      "MaxLength": "41",
+      "AllowedPattern": "[a-zA-Z0-9]*",
+      "ConstraintDescription": "must contain only alphanumeric characters."
+    },
+    "DBName": {
+      "Default": "honoluluanswers",
+      "Description": "The database name",
+      "Type": "String",
+      "MinLength": "8",
+      "MaxLength": "41",
+      "AllowedPattern": "[a-zA-Z0-9]*",
+      "ConstraintDescription": "must contain only alphanumeric characters."
+    },
+    "SearchifyApiURL": {
+      "Default" : "http://:oh5H697EC1TRlc@2zqe.api.searchify.com",
+      "Description" : "Prviate Searchify API URL",
+      "Type" : "String"
+    },
+     "SearchifyIndex": {
+      "Default" : "hnlgovanswers-dev",
+      "Description" : "Searchify Index",
+      "Type" : "String"
+    },
+    "privateSubnetA": {
+        "Type": "String",
+        "Description": "The private subnet in the VPC that the OpsWorks instances will launch into"
+    },
+    "privateSubnetB": {
+        "Type": "String",
+        "Description": "The private subnet in the VPC that the OpsWorks instances will launch into"
+    },
+    "publicSubnet": {
+        "Type": "String",
+        "Description": "The public subnet in the VPC that the elastic load balancers will launch into"
+    },
+    "vpc": {
+        "Type": "String",
+        "Description": "The VPC to launch into"
+    }
+
+  },
+  "Resources": {
+    "User" : {
+      "Type" : "AWS::IAM::User",
+      "Properties" : {
+        "Path": "/",
+        "Policies": [{
+          "PolicyName": "root",
+          "PolicyDocument": { "Statement":[{
+            "Effect":"Allow",
+            "Action":"*",
+            "Resource":"*"
+          }]}
+        }]
+      }
+    },
+     "HostKeys" : {
+      "Type" : "AWS::IAM::AccessKey",
+      "Properties" : {
+        "UserName" : { "Ref": "User" }
+      }
+    },
+
+    "DBSubnetGroup" : {
+      "Type" : "AWS::RDS::DBSubnetGroup",
+      "Properties" : {
+        "DBSubnetGroupDescription" : "Subnets available for the RDS DB Instance",
+        "SubnetIds" : [{ "Ref" : "privateSubnetA" },  { "Ref" : "privateSubnetB" }] 
+      }
+    },    
+    "DBInstance": {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": {
+        "DBName": { "Ref": "DBName" },
+        "DBSubnetGroupName": { "Ref" : "DBSubnetGroup"},
+        "Engine": "postgres",
+        "MultiAZ" : false,
+        "MasterUsername": { "Ref" : "DBUser"},
+        "DBInstanceClass": "db.t1.micro",
+        "VPCSecurityGroups": [ { "Ref": "DBSecurityGroup" }, { "Ref" : "HonoluluAnswersSecurityGroup"} ],
+        "AllocatedStorage": "5",
+        "MasterUserPassword": { "Ref": "DBPassword" }
+      }
+    },
+    "DBSecurityGroup": {
+        "Type": "AWS::EC2::SecurityGroup",
+        "Properties": {
+            "GroupDescription": "Security group for the Honolulu Answers RDS instance",
+            "SecurityGroupIngress": [
+                {
+                    "FromPort" : "1",
+                    "ToPort" : "65535", 
+                    "CidrIp": "0.0.0.0/0",
+                    "IpProtocol": "-1"
+                }
+            ],
+            "VpcId": {
+                "Ref": "vpc"
+            }
+        }
+    },
+    "HonoluluAnswersSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Security group that the Honolulu Rails server and RDS server will both be in",
+            "SecurityGroupIngress": [
+                {
+                    "FromPort" : "1",
+                    "ToPort" : "65535", 
+                    "CidrIp": "0.0.0.0/0",
+                    "IpProtocol": "-1"
+                }
+            ],
+        "VpcId" : { "Ref" : "vpc"}
+      }
+    },
+    "stack": {
+      "Type": "AWS::OpsWorks::Stack",
+      "Properties": {
+        "Name": { "Ref": "AWS::StackName" },
+        "VpcId": {
+            "Ref": "vpc"
+        },
+        "DefaultSubnetId": {
+            "Ref": "privateSubnetA"
+        },
+        "ServiceRoleArn": { "Fn::GetAtt": [ "OpsWorksServiceRole", "Arn" ] },
+        "DefaultInstanceProfileArn": { "Fn::GetAtt": [ "OpsWorksInstanceProfile", "Arn" ] },
+        "CustomCookbooksSource": {
+          "Type": "git",
+          "Url": "https://github.com/rajagopalan/honolulu_answers_cookbooks.git"
+        },
+        "UseCustomCookbooks": "true",
+        "CustomJson": {
+          "deploy": {
+            "honoluluanswers": {
+              "database": {
+                "adapter": "postgresql",
+                "password":  { "Ref": "DBPassword" },
+                "username": { "Ref" : "DBUser" },
+                "host": { "Fn::GetAtt": ["DBInstance", "Endpoint.Address"] },
+                "port": "5432",
+                "database": { "Ref" : "DBName" }
+              },
+              "environment_variables" : {
+                "NEW_RELIC_LICENSE_KEY": "dunno",
+                "NEW_RELIC_APP_NAME": "dunno",
+                "S3_BUCKET": "honolulu-test-bucket",
+                "S3_KEY" : { "Ref" : "HostKeys" },
+                "S3_SECRET" : {"Fn::GetAtt": ["HostKeys", "SecretAccessKey"]},
+                "SEARCHIFY_API_URL" : { "Ref": "SearchifyApiURL" },
+                "SEARCHIFY_API_INDEX" : { "Ref": "SearchifyIndex" }
+              }
+            }
+          }
+        },
+        "DefaultOs": "Ubuntu 12.04 LTS"
+      }
+    },
+    "layer": {
+      "Type": "AWS::OpsWorks::Layer",
+      "DependsOn": "app",
+      "Properties": {
+        "StackId": { "Ref": "stack" },
+        "Name": "rails",
+        "Type": "rails-app",
+        "Shortname": "rails",
+        "EnableAutoHealing": "true",
+        "AutoAssignElasticIps": "false",
+        "AutoAssignPublicIps": "true",
+        "CustomSecurityGroupIds" :  [ { "Ref" : "HonoluluAnswersSecurityGroup" } ],
+        "Attributes": {
+          "BundlerVersion": "1.3.5",
+          "PassengerVersion": "4.0.29",
+          "RailsStack": "apache_passenger",
+          "RubyVersion": "2.0.0",
+          "RubygemsVersion": "2.1.11"
+        },
+        "Packages": [
+          "nodejs",
+          "sqlite3",
+          "git",
+          "libxslt1-dev",
+          "libxml2-dev",
+          "libsasl2-dev",
+          "libpq-dev",
+          "memcached",
+          "build-essential",
+          "libsqlite3-dev",
+          "libhunspell-1.3-0",
+          "gettext",
+          "postgresql"
+        ],
+        "CustomRecipes": {
+          "Setup": [ "environment::set_env_variables", "honolulu::workaround" ],
+          "Deploy": [ "honolulu::migrate", "honolulu::seed", "honolulu::searchify" ]
+        }
+      }
+    },
+    "instance": {
+      "Type": "AWS::OpsWorks::Instance",
+      "Properties": {
+        "StackId": { "Ref": "stack" },
+        "LayerIds": [ { "Ref": "layer" } ],
+        "InstallUpdatesOnBoot": true,
+        "Os" : "Ubuntu 12.04 LTS",
+        "InstanceType": "c3.large",
+        "RootDeviceType": "ebs",
+        "Architecture": "x86_64"
+      }
+    },
+    "app": {
+      "Type": "AWS::OpsWorks::App",
+      "Properties": {
+        "StackId": { "Ref": "stack" },
+        "Name": "honoluluanswers",
+        "Type": "rails",
+        "AppSource": {
+          "Type": "git",
+          "Url": "https://github.com/rajagopalan/honolulu_answers.git"
+        },
+        "Attributes": {
+          "DocumentRoot": "public",
+          "RailsEnv" : "development",
+          "AutoBundleOnDeploy" : "true"
+        }
+      }
+    },
+    "OpsWorksServiceRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": { "Service": [ "opsworks.amazonaws.com" ] },
+              "Action": [ "sts:AssumeRole" ]
+            }
+          ]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "opsworks-service",
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:*",
+                    "iam:PassRole",
+                    "cloudwatch:GetMetricStatistics",
+                    "elasticloadbalancing:*"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "OpsWorksInstanceRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": { "Service": [ "ec2.amazonaws.com" ] },
+              "Action": [ "sts:AssumeRole" ]
+            }
+          ]
+        },
+        "Path": "/"
+      }
+    },
+    "OpsWorksInstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [ { "Ref": "OpsWorksInstanceRole" } ]
+      }
+    },
+    "ElasticLoadBalancer": {
+        "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+        "Properties": {
+            "SecurityGroups": [
+                {
+                    "Ref": "ELBSecurityGroup"
+                }
+            ],
+            "Subnets": [
+                {
+                    "Ref": "publicSubnet"
+                }
+            ],
+            "Listeners": [
+                {
+                    "LoadBalancerPort": "80",
+                    "InstancePort": "80",
+                    "Protocol": "TCP"
+                }
+            ],
+            "HealthCheck": {
+                "Target": "TCP:80",
+                "HealthyThreshold": "3",
+                "UnhealthyThreshold": "5",
+                "Interval": "90",
+                "Timeout": "60"
+            }
+        }
+    
+    },
+    "ELBSecurityGroup": {
+        "Type": "AWS::EC2::SecurityGroup",
+        "Properties": {
+            "GroupDescription": "Allow inbound access to the ELB",
+            "VpcId": {
+                "Ref": "vpc"
+            },
+            "SecurityGroupIngress": [
+                {
+                    "FromPort" : "1",
+                    "ToPort" : "65535", 
+                    "CidrIp": "0.0.0.0/0",
+                    "IpProtocol": "-1"
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": "80",
+                    "ToPort": "80",
+                    "CidrIp": "0.0.0.0/0"
+                }
+            ],
+            "SecurityGroupEgress": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": "80",
+                    "ToPort": "80",
+                    "CidrIp": "0.0.0.0/0"
+                }
+            ]
+        }
+    },
+    "LoadBalancerAttachment": {
+        "Type": "AWS::OpsWorks::ElasticLoadBalancerAttachment",
+        "Properties": {
+            "ElasticLoadBalancerName": {
+                "Ref": "ElasticLoadBalancer"
+            },
+            "LayerId": {
+                "Ref": "layer"
+            }
+        }
+    }
+
+  },
+  "Outputs": {
+    "StackId": { "Value": { "Ref": "stack" } },
+    "AppId":   { "Value": { "Ref": "app" } }
+  }
+}
